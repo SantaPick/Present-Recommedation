@@ -1,6 +1,0 @@
-user_trait 0
-user_concept 1
-user_item 2
-item_trait 3
-item_concept 4
-trait_concept 5

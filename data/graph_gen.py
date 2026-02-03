@@ -1,12 +1,11 @@
 """
 그래프 기반 추천시스템을 위한 지식 그래프 생성
-User-Item-Trait-Concept 노드와 엣지를 구성
+txt 파일들을 기반으로 User-Item-Trait-Concept 그래프 구축
 """
 
 import pandas as pd
 import numpy as np
 import networkx as nx
-from collections import defaultdict
 import pickle
 import os
 
@@ -20,226 +19,213 @@ class GraphGenerator:
             'concept': []
         }
         self.node_id_mapping = {}
-        self.current_node_id = 1000  # User 노드용 시작 ID
+        self.user_id_counter = 2000  # User 노드 ID 시작 번호
         
-        # 초기화 시 entity_list.txt에서 ID 매핑 로드
-        self.load_entity_mappings()
-        self.load_scale_trait_mapping()
-        self.load_relation_mappings()
-    
     def load_entity_mappings(self, entity_file="./graph_data/entity_list.txt"):
         """entity_list.txt에서 노드 ID 매핑 로드"""
+        self.node_id_mapping = {}
+        
         with open(entity_file, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
-                if line and not line.startswith('#'):
+                if line:
                     parts = line.split()
                     if len(parts) == 3:
-                        name, node_id, node_type = parts[0], int(parts[1]), parts[2]
-                        key = f"{node_type}_{name}"
-                        self.node_id_mapping[key] = node_id
-    
-    def load_scale_trait_mapping(self, mapping_file="./graph_data/scale_trait_mapping.txt"):
-        """척도-특성 매핑 로드"""
-        self.scale_trait_mapping = {}
-        with open(mapping_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    parts = line.split()
-                    if len(parts) == 2:
-                        scale, trait = parts[0], parts[1]
-                        if scale not in self.scale_trait_mapping:
-                            self.scale_trait_mapping[scale] = []
-                        self.scale_trait_mapping[scale].append(trait)
-    
-    def load_relation_mappings(self, relation_file="./graph_data/relation_list.txt"):
-        """관계 매핑 로드"""
-        self.relation_mappings = {}
-        with open(relation_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    parts = line.split()
-                    if len(parts) == 2:
-                        relation_name, relation_id = parts[0], int(parts[1])
-                        self.relation_mappings[relation_name] = relation_id
-    
-    def _get_node_id(self, node_name, node_type):
-        """노드 이름과 타입으로 ID 조회"""
-        key = f"{node_type}_{node_name}"
-        if key in self.node_id_mapping:
-            return self.node_id_mapping[key]
-        elif node_type == 'user':
-            new_id = self.current_node_id
-            self.node_id_mapping[key] = new_id
-            self.current_node_id += 1
-            return new_id
-        else:
-            return None
-    
-    def load_product_data(self, csv_path):
-        """상품 데이터 로드"""
-        df = pd.read_csv(csv_path)
-        return df
-    
-    
-    def create_trait_nodes(self):
-        """Trait 노드 생성"""
-        traits = []
-        for key, node_id in self.node_id_mapping.items():
-            if key.startswith('trait_'):
-                trait_name = key.replace('trait_', '')
-                self.graph.add_node(node_id, name=trait_name, type='trait')
-                self.node_types['trait'].append(node_id)
-                traits.append(trait_name)
+                        node_name, node_id, node_type = parts[0], int(parts[1]), parts[2]
+                        self.node_id_mapping[node_name] = {
+                            'id': node_id,
+                            'type': node_type
+                        }
         
-        return traits
-    
-    def create_concept_nodes(self):
-        """Concept 노드 생성"""
-        concepts = []
-        for key, node_id in self.node_id_mapping.items():
-            if key.startswith('concept_'):
-                concept_name = key.replace('concept_', '')
-                self.graph.add_node(node_id, name=concept_name, type='concept')
-                self.node_types['concept'].append(node_id)
-                concepts.append(concept_name)
+        print(f"로드된 노드: {len(self.node_id_mapping)}개")
         
-        return concepts
-    
-    def create_item_nodes(self, product_df):
-        """Item 노드 생성"""
-        for idx, row in product_df.iterrows():
-            product_id = row.get('product_id', f"item_{idx}")
-            node_id = self._get_node_id(product_id, 'item')
+    def create_nodes_from_entities(self):
+        """entity_list.txt 기반으로 모든 노드 생성"""
+        for node_name, node_info in self.node_id_mapping.items():
+            node_id = node_info['id']
+            node_type = node_info['type']
             
+            # 노드 생성
             self.graph.add_node(node_id, 
-                              name=row.get('name', ''),
-                              price=row.get('price', 0),
-                              category=row.get('category', ''),
-                              type='item',
-                              original_id=product_id)
-            self.node_types['item'].append(node_id)
+                              name=node_name, 
+                              type=node_type,
+                              original_id=node_name)
+            
+            # 노드 타입별 분류
+            self.node_types[node_type].append(node_id)
+        
+        print("노드 생성 완료:")
+        for node_type, nodes in self.node_types.items():
+            print(f"  {node_type}: {len(nodes)}개")
     
-    def add_user_from_psychology_test(self, user_id, psychology_results):
+    def load_trait_concept_edges(self, weights_file="./graph_data/trait_concept_weights.txt"):
+        """Trait-Concept 엣지 로드"""
+        edge_count = 0
+        
+        with open(weights_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    parts = line.split()
+                    if len(parts) == 3:
+                        trait_id, concept_id, weight = int(parts[0]), int(parts[1]), float(parts[2])
+                        
+                        if trait_id in self.graph.nodes() and concept_id in self.graph.nodes():
+                            self.graph.add_edge(trait_id, concept_id,
+                                              relation='trait_concept',
+                                              weight=weight)
+                            edge_count += 1
+        
+        print(f"Trait-Concept 엣지 생성: {edge_count}개")
+    
+    def load_item_concept_edges(self, weights_file="./graph_data/item_concept_weights.txt"):
+        """Item-Concept 엣지 로드"""
+        edge_count = 0
+        
+        with open(weights_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    parts = line.split()
+                    if len(parts) == 3:
+                        item_id, concept_id, weight = int(parts[0]), int(parts[1]), float(parts[2])
+                        
+                        if item_id in self.graph.nodes() and concept_id in self.graph.nodes():
+                            self.graph.add_edge(item_id, concept_id,
+                                              relation='item_concept',
+                                              weight=weight)
+                            edge_count += 1
+        
+        print(f"Item-Concept 엣지 생성: {edge_count}개")
+    
+    def load_item_trait_edges(self, weights_file="./graph_data/item_trait_weights.txt"):
+        """Item-Trait 엣지 로드 (현재 보류 상태)"""
+        if not os.path.exists(weights_file) or os.path.getsize(weights_file) == 0:
+            print("Item-Trait 엣지: 보류 상태 (파일 없음 또는 빈 파일)")
+            return
+        
+        edge_count = 0
+        with open(weights_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    parts = line.split()
+                    if len(parts) == 3:
+                        item_id, trait_id, weight = int(parts[0]), int(parts[1]), float(parts[2])
+                        
+                        if item_id in self.graph.nodes() and trait_id in self.graph.nodes():
+                            self.graph.add_edge(item_id, trait_id,
+                                              relation='item_trait',
+                                              weight=weight)
+                            edge_count += 1
+        
+        print(f"Item-Trait 엣지 생성: {edge_count}개")
+    
+    def add_user_node(self, user_id, psychology_results):
         """심리테스트 결과로 User 노드 동적 생성"""
-        node_id = self._get_node_id(user_id, 'user')
-        self.graph.add_node(node_id, 
+        # 새로운 User 노드 ID 할당
+        node_id = self.user_id_counter
+        self.user_id_counter += 1
+        
+        # User 노드 생성
+        self.graph.add_node(node_id,
                           name=user_id,
                           type='user',
                           original_id=user_id)
         self.node_types['user'].append(node_id)
         
-        for scale, result in psychology_results.items():
-            if scale in self.scale_trait_mapping:
-                for trait in self.scale_trait_mapping[scale]:
-                    trait_id = self._get_node_id(trait, 'trait')
-                    if trait_id in [n for n in self.graph.nodes() if self.graph.nodes[n].get('type') == 'trait']:
-                        weight = result.get('score', result.get('average', 0.5))
-                        self.graph.add_edge(node_id, trait_id, 
-                                          relation='user_trait', 
-                                          weight=weight)
+        # User-Trait 엣지 생성 (심리테스트 결과 기반)
+        edge_count = 0
+        for trait_name, score in psychology_results.items():
+            # trait_name으로 trait_id 찾기
+            if trait_name in self.node_id_mapping:
+                trait_id = self.node_id_mapping[trait_name]['id']
+                if trait_id in self.graph.nodes():
+                    # 점수 정규화 (0-1 범위로)
+                    normalized_score = max(0.0, min(1.0, score))
+                    self.graph.add_edge(node_id, trait_id,
+                                      relation='user_trait',
+                                      weight=normalized_score)
+                    edge_count += 1
         
+        print(f"User 노드 생성: {user_id} (ID: {node_id}), User-Trait 엣지: {edge_count}개")
         return node_id
     
-    def load_trait_concept_weights(self, weights_file="./graph_data/trait_concept_weights.txt"):
-        """Trait-Concept 가중치 파일에서 엣지 로드"""
-        with open(weights_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    parts = line.split()
-                    if len(parts) == 3:
-                        trait_id, concept_id, weight = int(parts[0]), int(parts[1]), float(parts[2])
-                        if trait_id in self.graph.nodes() and concept_id in self.graph.nodes():
-                            self.graph.add_edge(trait_id, concept_id,
-                                              relation='trait_concept',
-                                              weight=weight)
-    
-    def build_base_knowledge_graph(self, product_csv_path):
-        """기본 지식 그래프 구축"""
-        product_df = self.load_product_data(product_csv_path)
+    def build_base_graph(self):
+        """기본 지식 그래프 구축 (User 노드 제외)"""
+        print("=== 기본 그래프 구축 시작 ===")
         
-        traits = self.create_trait_nodes()
-        concepts = self.create_concept_nodes()
-        self.create_item_nodes(product_df)
+        # 1. 노드 ID 매핑 로드
+        self.load_entity_mappings()
         
-        self.load_trait_concept_weights()
+        # 2. 모든 노드 생성
+        self.create_nodes_from_entities()
+        
+        # 3. 엣지 생성
+        self.load_trait_concept_edges()
+        self.load_item_concept_edges()
+        self.load_item_trait_edges()
+        
+        print("=== 기본 그래프 구축 완료 ===")
+        self.print_graph_info()
         
         return self.graph
     
     def print_graph_info(self):
         """그래프 정보 출력"""
-        print(f"노드: {self.graph.number_of_nodes()}, 엣지: {self.graph.number_of_edges()}")
+        print(f"\n그래프 정보:")
+        print(f"  전체 노드: {self.graph.number_of_nodes()}개")
+        print(f"  전체 엣지: {self.graph.number_of_edges()}개")
+        
+        print(f"\n노드 타입별:")
         for node_type, nodes in self.node_types.items():
-            print(f"{node_type}: {len(nodes)}")
+            print(f"  {node_type}: {len(nodes)}개")
+        
+        # 엣지 타입별 통계
+        edge_types = {}
+        for _, _, data in self.graph.edges(data=True):
+            relation = data.get('relation', 'unknown')
+            edge_types[relation] = edge_types.get(relation, 0) + 1
+        
+        print(f"\n엣지 타입별:")
+        for relation, count in edge_types.items():
+            print(f"  {relation}: {count}개")
     
-    def save_graph_files(self, output_dir="./graph_data"):
-        """그래프를 표준 txt 파일들로 저장"""
-        import os
-        
-        # 출력 디렉토리 생성
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # 1. Entity List 업데이트 (실제 아이템 정보 포함)
-        entity_file = os.path.join(output_dir, "entity_list.txt")
-        with open(entity_file, 'w', encoding='utf-8') as f:
-            f.write("# Entity List - Node ID Mapping\n")
-            f.write("# Format: original_id remap_id node_type\n\n")
-            
-            for node_id in self.graph.nodes():
-                node_data = self.graph.nodes[node_id]
-                original_id = node_data.get('name', f"node_{node_id}")
-                node_type = node_data.get('type', 'unknown')
-                f.write(f"{original_id} {node_id} {node_type}\n")
-        
-        # 2. Graph Edges 생성
-        edges_file = os.path.join(output_dir, "graph_edges.txt")
-        with open(edges_file, 'w', encoding='utf-8') as f:
-            f.write("# Graph Edges (Triples)\n")
-            f.write("# Format: head_id relation_id tail_id weight\n\n")
-            
-            for head, tail, edge_data in self.graph.edges(data=True):
-                relation = edge_data.get('relation', 'unknown')
-                weight = edge_data.get('weight', 1.0)
-                
-                # 관계 타입을 ID로 매핑
-                relation_id = self.relation_mappings.get(relation, 0)
-                
-                f.write(f"{head} {relation_id} {tail} {weight}\n")
-        
-        pass
-    
-    def save_graph(self, save_path):
-        """기존 pickle 저장 (호환성 유지)"""
+    def save_graph(self, save_path="./recommendation_graph.pkl"):
+        """그래프를 pkl 파일로 저장"""
         graph_data = {
             'graph': self.graph,
             'node_types': self.node_types,
-            'node_id_mapping': self.node_id_mapping
+            'node_id_mapping': self.node_id_mapping,
+            'user_id_counter': self.user_id_counter
         }
         
         with open(save_path, 'wb') as f:
             pickle.dump(graph_data, f)
+        
+        print(f"\n그래프 저장 완료: {save_path}")
+    
+    def load_graph(self, load_path="./recommendation_graph.pkl"):
+        """pkl 파일에서 그래프 로드"""
+        with open(load_path, 'rb') as f:
+            graph_data = pickle.load(f)
+        
+        self.graph = graph_data['graph']
+        self.node_types = graph_data['node_types']
+        self.node_id_mapping = graph_data['node_id_mapping']
+        self.user_id_counter = graph_data.get('user_id_counter', 2000)
+        
+        print(f"그래프 로드 완료: {load_path}")
+        self.print_graph_info()
 
 def main():
-    product_csv = "../../Present-Data-Generation/dataset/products_with_description.csv"
-    
+    """메인 실행 함수"""
     graph_gen = GraphGenerator()
-    graph = graph_gen.build_base_knowledge_graph(product_csv)
     
-    test_psychology = {
-        'Big-Five': {'score': 4.2},
-        'CNFU': {'score': 3.8},
-        'CVPA': {'score': 4.5},
-        'MSV': {'score': 2.9},
-        'SSS': {'score': 3.6}
-    }
+    # 기본 그래프 구축 (User 노드 제외)
+    graph = graph_gen.build_base_graph()
     
-    user_node_id = graph_gen.add_user_from_psychology_test("test_user_001", test_psychology)
-    graph_gen.print_graph_info()
-    
-    graph_gen.save_graph_files("./graph_data")
+    # 그래프 저장
     graph_gen.save_graph("./recommendation_graph.pkl")
 
 if __name__ == "__main__":
