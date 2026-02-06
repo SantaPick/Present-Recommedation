@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "santa-pick-recommendation"
+version = "0.1.0"
+description = "심리테스트 기반 그래프 추천시스템"
+requires-python = ">=3.8"
+dependencies = [
+    "pandas>=1.5.0",
+    "numpy>=1.21.0",
+    "networkx>=2.8.0",
+    "scikit-learn>=1.1.0",
+    "matplotlib>=3.5.0",
+    "seaborn>=0.11.0",
+    "torch>=1.12.0",
+    "torch-geometric>=2.1.0",
+    "jupyter>=1.0.0",
+    "ipykernel>=6.0.0",
+    "tqdm>=4.64.0",
+    "plotly>=5.10.0",
+    "node2vec>=0.4.6",
+    "gensim>=4.2.0",
+    "streamlit>=1.20.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0"
+]
+dgl = [
+    "dgl>=0.9.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["data*", "models*", "recommend*", "utils*"]
+
+[project.scripts]
+recommend-test = "recommend_test:main"
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]
