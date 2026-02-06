@@ -13,13 +13,11 @@ class GraphGenerator:
     def __init__(self):
         self.graph = nx.Graph()
         self.node_types = {
-            'user': [],
             'item': [],
             'trait': [],
             'concept': []
         }
         self.node_id_mapping = {}
-        self.user_id_counter = 2000  # User 노드 ID 시작 번호
         
     def load_entity_mappings(self, entity_file="./graph_data/entity_list.txt"):
         """entity_list.txt에서 노드 ID 매핑 로드"""
@@ -123,35 +121,6 @@ class GraphGenerator:
         
         print(f"Item-Trait 엣지 생성: {edge_count}개 (가중치 -3~3 → -1~1 스케일링 적용)")
     
-    def add_user_node(self, user_id, psychology_results):
-        """심리테스트 결과로 User 노드 동적 생성"""
-        # 새로운 User 노드 ID 할당
-        node_id = self.user_id_counter
-        self.user_id_counter += 1
-        
-        # User 노드 생성
-        self.graph.add_node(node_id,
-                          name=user_id,
-                          type='user',
-                          original_id=user_id)
-        self.node_types['user'].append(node_id)
-        
-        # User-Trait 엣지 생성 (심리테스트 결과 기반)
-        edge_count = 0
-        for trait_name, score in psychology_results.items():
-            # trait_name으로 trait_id 찾기
-            if trait_name in self.node_id_mapping:
-                trait_id = self.node_id_mapping[trait_name]['id']
-                if trait_id in self.graph.nodes():
-                    # 점수 정규화 (0-1 범위로)
-                    normalized_score = max(0.0, min(1.0, score))
-                    self.graph.add_edge(node_id, trait_id,
-                                      relation='user_trait',
-                                      weight=normalized_score)
-                    edge_count += 1
-        
-        print(f"User 노드 생성: {user_id} (ID: {node_id}), User-Trait 엣지: {edge_count}개")
-        return node_id
     
     def build_base_graph(self):
         """기본 지식 그래프 구축 (User 노드 제외)"""
@@ -198,8 +167,7 @@ class GraphGenerator:
         graph_data = {
             'graph': self.graph,
             'node_types': self.node_types,
-            'node_id_mapping': self.node_id_mapping,
-            'user_id_counter': self.user_id_counter
+            'node_id_mapping': self.node_id_mapping
         }
         
         with open(save_path, 'wb') as f:
@@ -215,7 +183,6 @@ class GraphGenerator:
         self.graph = graph_data['graph']
         self.node_types = graph_data['node_types']
         self.node_id_mapping = graph_data['node_id_mapping']
-        self.user_id_counter = graph_data.get('user_id_counter', 2000)
         
         print(f"그래프 로드 완료: {load_path}")
         self.print_graph_info()
