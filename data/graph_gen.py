@@ -58,7 +58,7 @@ class GraphGenerator:
         for node_type, nodes in self.node_types.items():
             print(f"  {node_type}: {len(nodes)}개")
     
-    def load_trait_concept_edges(self, weights_file="./graph_data/trait_concept_weights.txt"):
+    def load_trait_concept_edges(self, weights_file="graph_data/trait_concept_weights.txt"):
         """Trait-Concept 엣지 로드"""
         edge_count = 0
         
@@ -99,7 +99,7 @@ class GraphGenerator:
         print(f"Item-Concept 엣지 생성: {edge_count}개")
     
     def load_item_trait_edges(self, weights_file="./graph_data/item_trait_weights.txt"):
-        """Item-Trait 엣지 로드 (현재 보류 상태)"""
+        """Item-Trait 엣지 로드 (가중치 -3~3을 -1~1로 스케일링)"""
         if not os.path.exists(weights_file) or os.path.getsize(weights_file) == 0:
             print("Item-Trait 엣지: 보류 상태 (파일 없음 또는 빈 파일)")
             return
@@ -114,12 +114,14 @@ class GraphGenerator:
                         item_id, trait_id, weight = int(parts[0]), int(parts[1]), float(parts[2])
                         
                         if item_id in self.graph.nodes() and trait_id in self.graph.nodes():
+                            # 가중치 -3~3 범위를 -1~1로 스케일링
+                            scaled_weight = weight / 3.0
                             self.graph.add_edge(item_id, trait_id,
                                               relation='item_trait',
-                                              weight=weight)
+                                              weight=scaled_weight)
                             edge_count += 1
         
-        print(f"Item-Trait 엣지 생성: {edge_count}개")
+        print(f"Item-Trait 엣지 생성: {edge_count}개 (가중치 -3~3 → -1~1 스케일링 적용)")
     
     def add_user_node(self, user_id, psychology_results):
         """심리테스트 결과로 User 노드 동적 생성"""

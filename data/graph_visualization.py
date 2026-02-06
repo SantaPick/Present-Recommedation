@@ -226,11 +226,21 @@ class GraphVisualizer:
         # 3D 좌표 생성 (진짜 구형 배치)
         pos_3d = {}
         
+        # Trait 노드만 균등 배치를 위해 먼저 수집
+        trait_nodes = []
+        for node_id in pos_2d:
+            node_type = subgraph.nodes[node_id].get('type', 'unknown')
+            if node_type == 'trait':
+                trait_nodes.append(node_id)
+        
+        # Trait 노드 인덱스
+        trait_idx = 0
+        
         for node_id in pos_2d:
             node_type = subgraph.nodes[node_id].get('type', 'unknown')
             
             if node_type == 'concept':
-                # Concept는 중심 작은 구에 배치 (더 넓게)
+                # Concept는 중심 작은 구에 배치 (원래대로)
                 radius = np.random.uniform(0.5, 1.0)
                 theta = np.random.uniform(0, 2 * np.pi)
                 phi = np.random.uniform(0, np.pi)
@@ -239,16 +249,19 @@ class GraphVisualizer:
                 z = radius * np.cos(phi)
                 
             elif node_type == 'trait':
-                # Trait는 바깥쪽 구 표면에 배치 (더 멀리)
-                radius = np.random.uniform(4.0, 5.0)
-                theta = np.random.uniform(0, 2 * np.pi)
-                phi = np.random.uniform(0, np.pi)
+                # Trait는 바깥쪽 구 표면에 균등하게 배치
+                n_traits = len(trait_nodes)
+                radius = 4.0 + (trait_idx / n_traits) * 1.0  # 4.0 ~ 5.0
+                # 균등 분포를 위한 인덱스 기반 각도
+                theta = 2 * np.pi * trait_idx * 0.618033988749895  # 황금각 사용
+                phi = np.arccos(1 - 2 * (trait_idx + 0.5) / n_traits)
                 x = radius * np.sin(phi) * np.cos(theta)
                 y = radius * np.sin(phi) * np.sin(theta)
                 z = radius * np.cos(phi)
+                trait_idx += 1
                 
             else:  # item
-                # Item은 중간 구 껍질에 배치 (더 넓은 범위)
+                # Item은 중간 구 껍질에 배치 (원래대로)
                 radius = np.random.uniform(2.0, 3.5)
                 theta = np.random.uniform(0, 2 * np.pi)
                 phi = np.random.uniform(0, np.pi)
@@ -319,11 +332,40 @@ class GraphVisualizer:
                 showlegend=True
             ))
         
+        # Item-Trait 엣지
+        item_trait_edges = [(e[0], e[1]) for e in subgraph.edges(data=True) 
+                           if e[2].get('relation') == 'item_trait']
+        if item_trait_edges:
+            it_x, it_y, it_z = [], [], []
+            it_weights = []
+            for edge in item_trait_edges:
+                x0, y0, z0 = pos_3d[edge[0]]
+                x1, y1, z1 = pos_3d[edge[1]]
+                it_x.extend([x0, x1, None])
+                it_y.extend([y0, y1, None])
+                it_z.extend([z0, z1, None])
+                
+                # 가중치 정보 수집
+                edge_data = subgraph.get_edge_data(edge[0], edge[1])
+                weight = edge_data.get('weight', 1.0)
+                it_weights.extend([weight, weight, None])
+            
+            edge_trace.append(go.Scatter3d(
+                x=it_x, y=it_y, z=it_z,
+                mode='lines',
+                line=dict(color='rgba(80,80,80,0.2)', width=0.3),
+                hoverinfo='text',
+                hovertext=[f"가중치: {w:.3f}" if w is not None else "" for w in it_weights],
+                name='Item-Trait',
+                legendgroup='item_trait',
+                showlegend=True
+            ))
+        
         # 3D 노드 그리기
         color_map = {
-            'trait': '#FF6B6B',      # 빨강 (위층)
-            'concept': '#4ECDC4',    # 청록 (중간층)
-            'item': '#45B7D1'        # 파랑 (아래층)
+            'trait': '#FF6B6B',      # 빨강
+            'concept': '#32CD32',    # 초록 (LimeGreen)
+            'item': '#45B7D1'        # 파랑
         }
         
         node_traces = []
@@ -411,8 +453,145 @@ class GraphVisualizer:
         fig = go.Figure(data=edge_trace + node_traces, layout=layout)
         
         if save_path:
-            fig.write_html(save_path)
+            # HTML에 자동 회전 기능과 버튼 추가
+            html_str = fig.to_html(include_plotlyjs='cdn', div_id='plotly-3d-graph')
+            
+            # 자동 회전 스크립트 추가
+            auto_rotate_script = """
+<div id="auto-rotate-control" style="position: fixed; top: 20px; right: 20px; z-index: 10000; pointer-events: auto;">
+    <button id="rotate-btn" style="
+        background-color: rgba(255, 107, 107, 0.9);
+        color: white;
+        border: 2px solid rgba(255, 107, 107, 0.8);
+        border-radius: 8px;
+        padding: 12px 24px;
+        font-size: 14px;
+        cursor: pointer;
+        font-weight: bold;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        transition: all 0.3s ease;
+    ">자동 회전 OFF</button>
+</div>
+
+<script>
+(function() {
+    let isRotating = true;  // 기본적으로 회전 시작
+    let animationId = null;
+    let angle = 0;
+    const rotationSpeed = 0.03;  // 회전 속도 3배 증가
+    
+    function waitForPlotly() {
+        const gd = document.getElementById('plotly-3d-graph') || 
+                   document.querySelector('[data-plotly]') || 
+                   document.querySelector('.plotly') ||
+                   document.querySelector('div[id*="plotly"]');
+        
+        if (typeof Plotly !== 'undefined' && gd) {
+            // Plotly가 완전히 로드될 때까지 추가 대기
+            setTimeout(function() {
+                if (gd.data && gd.data.length > 0) {
+                    initAutoRotate(gd);
+                    // 자동으로 회전 시작
+                    startRotation(gd);
+                } else {
+                    setTimeout(waitForPlotly, 200);
+                }
+            }, 500);
+        } else {
+            setTimeout(waitForPlotly, 100);
+        }
+    }
+    
+    function initAutoRotate(gd) {
+        const btn = document.getElementById('rotate-btn');
+        if (!btn) {
+            console.error('버튼을 찾을 수 없습니다');
+            return;
+        }
+        
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            isRotating = !isRotating;
+            btn.textContent = isRotating ? '자동 회전 OFF' : '자동 회전 ON';
+            btn.style.backgroundColor = isRotating ? 'rgba(255, 107, 107, 0.9)' : 'rgba(0, 0, 0, 0.8)';
+            btn.style.borderColor = isRotating ? 'rgba(255, 107, 107, 0.8)' : 'rgba(255, 255, 255, 0.5)';
+            
+            if (isRotating) {
+                startRotation(gd);
+            } else {
+                stopRotation();
+            }
+        });
+        
+        // 사용자가 그래프를 직접 조작할 때 회전 중지
+        gd.on('plotly_relayout', function() {
+            if (isRotating) {
+                stopRotation();
+                isRotating = false;
+                btn.textContent = '자동 회전 ON';
+                btn.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+                btn.style.borderColor = 'rgba(255, 255, 255, 0.5)';
+            }
+        });
+    }
+    
+    function startRotation(gd) {
+        function rotate() {
+            if (!isRotating) return;
+            
+            angle += rotationSpeed;
+            
+            const radius = 6;
+            const eyeX = radius * Math.sin(angle);
+            const eyeZ = radius * Math.cos(angle);
+            const eyeY = 2;
+            
+            Plotly.relayout(gd, {
+                'scene.camera.eye.x': eyeX,
+                'scene.camera.eye.y': eyeY,
+                'scene.camera.eye.z': eyeZ,
+                'scene.camera.center.x': 0,
+                'scene.camera.center.y': 0,
+                'scene.camera.center.z': 0,
+                'scene.camera.up.x': 0,
+                'scene.camera.up.y': 1,
+                'scene.camera.up.z': 0
+            });
+            
+            animationId = requestAnimationFrame(rotate);
+        }
+        rotate();
+    }
+    
+    function stopRotation() {
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+            animationId = null;
+        }
+    }
+    
+    // DOM이 로드된 후 실행
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', waitForPlotly);
+    } else {
+        waitForPlotly();
+    }
+})();
+</script>
+"""
+            
+            # </body> 태그 앞에 스크립트 삽입
+            if '</body>' in html_str:
+                html_str = html_str.replace('</body>', auto_rotate_script + '</body>')
+            else:
+                # </body> 태그가 없으면 끝에 추가
+                html_str += auto_rotate_script
+            
+            with open(save_path, 'w', encoding='utf-8') as f:
+                f.write(html_str)
+            
             print(f"3D 지식 그래프 저장: {save_path}")
+            print("자동 회전 기능이 포함되었습니다. 오른쪽 상단 버튼으로 제어하세요.")
         
         fig.show()
         return fig
